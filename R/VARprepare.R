@@ -16,6 +16,7 @@
 #' variable name(s) in `data` differ from the outcome variable name(s) specified in `model`
 #' @param outcome_pred_btw tba.
 #' @param center_covs tba.
+#' @param complete_obs tba.
 #'
 #' @return A `list` object that can be passed to \code{\link[rstan]{sampling}}.
 #' @export
@@ -39,7 +40,7 @@
 #'
 #'
 VARprepare <- function(model, data, ts, covariates = NULL, outcomes = NULL,
-                       outcome_pred_btw = NULL, center_covs = T
+                       outcome_pred_btw = NULL, center_covs = T, complete_obs = F
 ){
 
 
@@ -65,14 +66,111 @@ VARprepare <- function(model, data, ts, covariates = NULL, outcomes = NULL,
     }
   }
 
+  # model specific information: ------------------------------------------------
+  infos = mlts_model_eval(model)
+  maxLag = infos$maxLag
+
+
+  # alternative handling of missing values via indexing -------------------------
+  if(complete_obs == T){
+
+  #### Experimental at this point....
+  ids = unique(data$num_id)
+  # add row id to data
+  data$row_id = 1:nrow(data)
+  N_obs_id_new = c()
+  N_obs_id_use = c()
+  # get number of obs to use as DV
+  for(p in 1:N){
+    dat_id = data[data$num_id == p,c("num_id","row_id",ts)]
+    # create lagged variables
+    for(d in 1:length(ts)){
+      for(i in 1:maxLag){
+        dat_id[,paste(ts[d],"__lag",i)] = c(rep(NA,times = i),dat_id[,ts[d]][1:(nrow(dat_id)-i)])
+      }
+    }
+    # check for complete rows
+    if(length(ts) == 1){
+      row_y_complete = which(!is.na(dat_id[,3:(2+length(ts))]))
+    } else {
+      row_y_complete = which(rowSums(is.na(dat_id[,3:(2+length(ts))])) == 0)
+    }
+    row_use_id = which(rowSums(is.na(dat_id[,3:ncol(dat_id)])) == 0)
+
+    # get lagged obs
+    rows_lag = c(row_use_id)
+    for(z in 1:maxLag){
+      rows_lag = c(rows_lag, (row_use_id-z))
+    }
+    # filter complete rows with complete lagged observations
+    row_y_complete = row_y_complete[row_y_complete %in% rows_lag]
+
+    N_obs_id_use[p] = length(row_use_id)
+    N_obs_id_new[p] = length(row_y_complete)
+  }
+
+  # get position indices on Y in the data
+  N_obs_use_max = max(N_obs_id_use)
+  N_obs_id_max = max(N_obs_id_new)
+  N_obs_y_pos = array(data = 0, dim = c(N, N_obs_id_max))
+  N_obs_yt_pos = array(data = 0, dim = c(N, N_obs_use_max))
+  N_obs_ylag_pos = array(data = 0, dim = c(N, maxLag, N_obs_use_max))
+
+  for(p in 1:N){
+    dat_id = data[data$num_id == p,c("num_id","row_id", ts)]
+    # create lagged variables
+    for(d in 1:length(ts)){
+      for(i in 1:maxLag){
+        dat_id[,paste(ts[d],"__lag",i)] = c(rep(NA,times = i),dat_id[,ts[d]][1:(nrow(dat_id)-i)])
+      }
+    }
+    # check for complete rows
+    if(length(ts) == 1){
+      row_y_complete = which(!is.na(dat_id[,3:(2+length(ts))]))
+    } else {
+      row_y_complete = which(rowSums(is.na(dat_id[,3:(2+length(ts))])) == 0)
+    }
+    row_use_id = which(rowSums(is.na(dat_id[,3:ncol(dat_id)])) == 0)
+
+    # get lagged obs
+    rows_lag = c(row_use_id)
+    for(z in 1:maxLag){
+      rows_lag = c(rows_lag, (row_use_id-z))
+    }
+    # filter complete rows with complete lagged observations
+    row_y_complete = row_y_complete[row_y_complete %in% rows_lag]
+
+    dat_id_cen = dat_id[row_y_complete,]
+    dat_id_cen$row_id_cen = 1:nrow(dat_id_cen)
+
+    # get positions of Yt
+    N_obs_y_pos[p, 1:N_obs_id_new[p]] = dat_id$row_id[row_y_complete]
+    N_obs_yt_pos[p, 1:N_obs_id_use[p]] = dat_id$row_id[row_use_id]
+    for(z in 1:maxLag){
+      rows = dat_id_cen$row_id_cen[dat_id_cen$row_id %in% (N_obs_yt_pos[p, 1:N_obs_id_use[p]] - z)]
+      N_obs_ylag_pos[p,z,1:N_obs_id_use[p]] = rows
+    }
+   }
+  n_obs_cov_new = sum(N_obs_id_use)
+
+  } else {
+    N_obs_id_new = 0
+    N_obs_id_max = 0
+    N_obs_id_use = 0
+    N_obs_use_max = 0
+    N_obs_y_pos = 0
+    N_obs_yt_pos = 0
+    N_obs_ylag_pos = 0
+    n_obs_cov_new = 0
+  }
+
+  # END EXPERIMENTAL SECTION -----------------------------------
+
   ## replace missing values with -Inf
   data[,ts][is.na(data[,ts])] = -Inf
   y = t(data[,ts])   # store observations
 
   # ----
-
-  # model specific information: ------------------------------------------------
-  infos = mlts_model_eval(model)
 
   n_pars = infos$n_pars       # no of dynamic parameters (including means, CRs, innovation variance)
   n_random = infos$n_random   # no of individual (random) effects
@@ -134,6 +232,7 @@ VARprepare <- function(model, data, ts, covariates = NULL, outcomes = NULL,
   n_out_b_pos = infos$n_out_b_pos
   n_out_bs_max = infos$n_out_bs_max
   n_out_bs_sum = infos$n_out_bs_sum
+
   # outcome data
   out = matrix(nrow = n_out, ncol = N, data = NA)
   if(n_out>0){
@@ -176,6 +275,10 @@ VARprepare <- function(model, data, ts, covariates = NULL, outcomes = NULL,
   standata = rstan::nlist(
     # data specifications
     N, D,maxLag, N_obs, N_obs_id, y, n_miss, n_miss_D, pos_miss_D,
+    # addons for faster missing data appoach via indexing
+    N_obs_id_new, N_obs_id_max, N_obs_id_use, N_obs_use_max,
+    N_obs_y_pos, N_obs_yt_pos,N_obs_ylag_pos, n_obs_cov_new,
+
     # model specifications
     n_pars, n_random, n_fixed, is_random, is_fixed,
     N_pred, D_pred, Lag_pred, Dpos1, Dpos2,

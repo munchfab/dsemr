@@ -58,6 +58,7 @@
 #' latent variables) be stored? Default is FALSE.
 #' @param get_SD_latent Logical. Set to `TRUE` to obtain standardized estimates
 #' in multiple-indicator models.
+#' @param complete_only Logical. Add description later.
 #' @param print_message Logical. Print messages based on defined inputs (default = TRUE).
 #' @param print_warning Logical. Print warnings based on defined inputs (default = TRUE).
 #' @param fit_model Logical. Set to FALSE to avoid fitting the model which may be
@@ -122,6 +123,7 @@ mlts_fit <- function(model,
                      cores = 2,
                      monitor_person_pars = F,
                      get_SD_latent = F,
+                     complete_only = F,
                      fit_model = T,
                      print_message = T,
                      print_warning = T,
@@ -159,9 +161,10 @@ mlts_fit <- function(model,
 
   # check if data is class "mlts_simdata"
   if(data.simulated == T){
+    if(print_message == T){
     message("Simulated data provided:",
     "\nTrue scores used in the data generation will be added to the returned object.")
-
+    }
     par_labels <- merge(x = par_labels, data$model[,c("Param", "true.val")],
                        by = "Param", sort = F)
 
@@ -171,9 +174,6 @@ mlts_fit <- function(model,
     data <- data$data
     id <- "ID"
     beep <- "time"
-
-    #### for now only use na.rm = T -version for simulated data
-    na.rm <- TRUE
     }
 
   # Some initial checks:
@@ -275,7 +275,7 @@ mlts_fit <- function(model,
     standata <- VARprepare(model = model, data = data, ts = ts,
                           covariates = covariates, outcomes = outcomes,
                           outcome_pred_btw = outcome_pred_btw,
-                          center_covs = center_covs)
+                          center_covs = center_covs, complete_obs = complete_only)
 
     # model fit
     pars <- c("gammas","b_fix", "sigma", "sd_R", "bcorr",
@@ -284,8 +284,11 @@ mlts_fit <- function(model,
       pars = c(pars, "b_free")
     }
 
+
     if(standata$n_inno_cors == 0){
-      if(fit_model==T){
+      if(fit_model==F){
+        stanfit <- NULL
+      } else if(complete_only == F){
         stanfit <- rstan::sampling(
           stanmodels$VAR_manifest,
           data = standata,
@@ -296,7 +299,15 @@ mlts_fit <- function(model,
           ...
         )
       } else {
-        stanfit <- NULL
+        stanfit <- rstan::sampling(
+          stanmodels$VAR_manifest_nonimpute,
+          data = standata,
+          pars = pars,
+          iter = iter,
+          cores = cores,
+          chains = chains,
+          ...
+        )
       }
     } else if(standata$n_inno_cors > 0){
       pars = c(pars,"bcorr_inn")

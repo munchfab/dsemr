@@ -24,6 +24,7 @@ mlts_fit(
   cores = 2,
   monitor_person_pars = F,
   get_SD_latent = F,
+  complete_only = F,
   fit_model = T,
   print_message = T,
   print_warning = T,
@@ -107,6 +108,8 @@ latent variables) be stored? Default is FALSE.}
 
 \item{get_SD_latent}{Logical. Set to \code{TRUE} to obtain standardized estimates
 in multiple-indicator models.}
+
+\item{complete_only}{Logical. Add description later.}
 
 \item{fit_model}{Logical. Set to FALSE to avoid fitting the model which may be
 helpful to inspect prepared data used for model estimation (default = TRUE).}
